@@ -23,7 +23,13 @@ if (serviceAccount.project_id) {
 const db = serviceAccount.project_id ? admin.firestore() : null;
 
 // ── OpenAI ────────────────────────────────────────────────────────────────────
-const openai = new OpenAI({ apiKey: OPENAI_KEY });
+let _openai = null;
+function getOpenAI() {
+  if (!_openai) {
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 // ── Bot ───────────────────────────────────────────────────────────────────────
 const app = express();
@@ -94,7 +100,7 @@ function tarihParse(metin) {
 }
 
 async function gorselAnaliz(imageUrl, kitapAdi = '') {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 1500,
     messages: [{
