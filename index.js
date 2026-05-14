@@ -1,17 +1,34 @@
 const express = require('express');
-const TelegramBot = require('node-telegram-bot-api');
 const OpenAI = require('openai');
 const admin = require('firebase-admin');
 const axios = require('axios');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ALLOWED_USER_ID = parseInt(process.env.TELEGRAM_USER_ID || '0');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
+
+// ── Telegram API ──────────────────────────────────────────────────────────────
+async function sendMessage(chatId, text, options = {}) {
+  try {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text,
+      parse_mode: options.parse_mode || 'Markdown',
+      ...options
+    });
+  } catch (e) {
+    console.error('sendMessage hata:', e.message);
+  }
+}
+
+async function getFile(fileId) {
+  const res = await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`);
+  return res.data.result;
+}
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
@@ -34,8 +51,6 @@ function getOpenAI() {
 // ── Bot ───────────────────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
-
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
 // Kullanıcı durumları (bekleyen sorular)
 const userState = {};
@@ -146,7 +161,7 @@ async function mesajisle(msg) {
   const metin = msg.text || '';
 
   if (!yetkiKontrol(userId)) {
-    bot.sendMessage(chatId, '❌ Bu bot sadece yetkili kullanıcılar içindir.');
+    sendMessage(chatId, '❌ Bu bot sadece yetkili kullanıcılar içindir.');
     return;
   }
 
@@ -157,7 +172,7 @@ async function mesajisle(msg) {
     if (state.tip === 'urun_ad_bekle') {
       state.urun.ad = metin;
       userState[userId] = { tip: 'urun_not_bekle', urun: state.urun };
-      bot.sendMessage(chatId, '📝 Kısa bir not eklemek ister misin? (Geçmek için "yok" yaz)');
+      sendMessage(chatId, '📝 Kısa bir not eklemek ister misin? (Geçmek için "yok" yaz)');
       return;
     }
 
@@ -167,7 +182,7 @@ async function mesajisle(msg) {
       const urun = { ...state.urun, id: uid(), tarih: new Date().toLocaleDateString('tr-TR') };
       await firebaseKaydet('urunler', urun.id, urun);
       delete userState[userId];
-      bot.sendMessage(chatId,
+      sendMessage(chatId,
         `✅ Ürün kaydedildi!\n\n🛍️ *${urun.ad}*\n${urun.videoLink ? `▶️ ${urun.videoLink}\n` : ''}${urun.sosyalLink ? `📱 ${urun.sosyalLink}\n` : ''}${urun.not ? `📝 ${urun.not}` : ''}`,
         { parse_mode: 'Markdown' }
       );
@@ -186,19 +201,19 @@ async function mesajisle(msg) {
           state.notlar
         );
         delete userState[userId];
-        bot.sendMessage(chatId,
+        sendMessage(chatId,
           `✅ Takvime eklendi!\n\n📅 *${state.baslik}*\n🕐 ${baslangic.toLocaleString('tr-TR')} (${sure} dk)`,
           { parse_mode: 'Markdown' }
         );
       } catch (e) {
-        bot.sendMessage(chatId, `❌ Takvim hatası: ${e.message}`);
+        sendMessage(chatId, `❌ Takvim hatası: ${e.message}`);
       }
       return;
     }
 
     if (state.tip === 'kitap_ad_bekle') {
       state.kitapAdi = metin === 'yok' ? '' : metin;
-      bot.sendMessage(chatId, '🤖 Analiz ediliyor...');
+      sendMessage(chatId, '🤖 Analiz ediliyor...');
       try {
         const ozet = await gorselAnaliz(state.imageUrl, state.kitapAdi);
         const not = {
@@ -210,9 +225,9 @@ async function mesajisle(msg) {
         };
         await firebaseKaydet('notlar', not.id, not);
         delete userState[userId];
-        bot.sendMessage(chatId, `📚 *${not.baslik}*\n\n${ozet}\n\n✅ Uygulamana kaydedildi!`, { parse_mode: 'Markdown' });
+        sendMessage(chatId, `📚 *${not.baslik}*\n\n${ozet}\n\n✅ Uygulamana kaydedildi!`, { parse_mode: 'Markdown' });
       } catch (e) {
-        bot.sendMessage(chatId, `❌ Analiz hatası: ${e.message}`);
+        sendMessage(chatId, `❌ Analiz hatası: ${e.message}`);
       }
       return;
     }
@@ -232,7 +247,7 @@ async function mesajisle(msg) {
         sosyalLink: isInstagram ? url : (!isTikTok && !isYoutube ? url : ''),
       }
     };
-    bot.sendMessage(chatId, `🛍️ Link alındı! Ürünün adı ne?`);
+    sendMessage(chatId, `🛍️ Link alındı! Ürünün adı ne?`);
     return;
   }
 
@@ -242,7 +257,7 @@ async function mesajisle(msg) {
     const { tarih, saat } = tarihParse(icerik);
 
     if (!saat) {
-      bot.sendMessage(chatId, '⏰ Saat belirtmedin. Örnek: "takvim: yarın 09:00 spor"');
+      sendMessage(chatId, '⏰ Saat belirtmedin. Örnek: "takvim: yarın 09:00 spor"');
       return;
     }
 
@@ -256,13 +271,13 @@ async function mesajisle(msg) {
       .trim() || 'Aktivite';
 
     userState[userId] = { tip: 'takvim_sure_bekle', baslik, baslangic: tarih, notlar: '' };
-    bot.sendMessage(chatId, `📅 *${baslik}* - ${tarih.toLocaleString('tr-TR')}\n\nKaç dakika sürecek? (Varsayılan: 60)`, { parse_mode: 'Markdown' });
+    sendMessage(chatId, `📅 *${baslik}* - ${tarih.toLocaleString('tr-TR')}\n\nKaç dakika sürecek? (Varsayılan: 60)`, { parse_mode: 'Markdown' });
     return;
   }
 
   // Yardım
   if (metin === '/start' || metin === '/yardim' || metin === '/help') {
-    bot.sendMessage(chatId,
+    sendMessage(chatId,
       `👋 *Günüm Bot'a Hoş Geldin!*\n\n` +
       `📸 *Kitap Notu:* Bir fotoğraf gönder, AI özetlesin\n\n` +
       `🛍️ *Ürün Ekle:* Bir link gönder, sana soru sorarak kaydedeyim\n\n` +
@@ -275,7 +290,7 @@ async function mesajisle(msg) {
   }
 
   // Bilinmeyen mesaj
-  bot.sendMessage(chatId,
+  sendMessage(chatId,
     `Anlamadım 🤔\n\n• Fotoğraf gönder → kitap notu\n• Link gönder → ürün kaydet\n• "takvim: yarın 09:00 spor" → takvime ekle\n• /yardim → tüm komutlar`
   );
 }
@@ -286,11 +301,11 @@ async function fotografisle(msg) {
 
   if (!yetkiKontrol(userId)) return;
 
-  bot.sendMessage(chatId, '📚 Kitap adını yazar mısın? (Geçmek için "yok" yaz)');
+  sendMessage(chatId, '📚 Kitap adını yazar mısın? (Geçmek için "yok" yaz)');
 
   // En büyük fotoğrafı al
   const foto = msg.photo[msg.photo.length - 1];
-  const fileInfo = await bot.getFile(foto.file_id);
+  const fileInfo = await getFile(foto.file_id);
   const imageUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileInfo.file_path}`;
 
   userState[userId] = { tip: 'kitap_ad_bekle', imageUrl };
@@ -315,11 +330,4 @@ app.get('/', (req, res) => res.send('Günüm Bot çalışıyor 🚀'));
 
 app.listen(PORT, () => {
   console.log(`Server port ${PORT} üzerinde çalışıyor`);
-  // Webhook'u ayarla
-  if (process.env.RAILWAY_STATIC_URL || process.env.WEBHOOK_URL) {
-    const url = process.env.WEBHOOK_URL || `https://${process.env.RAILWAY_STATIC_URL}`;
-    bot.setWebHook(`${url}/webhook`)
-      .then(() => console.log('Webhook ayarlandı:', url))
-      .catch(console.error);
-  }
 });
